@@ -83,9 +83,9 @@ class PatchNote:
 
 
 def save_patch_note_cache(patch_notes: List[PatchNote]) -> None:
-    result = []
+    result = {}
     for patch_note in patch_notes:
-        result.append(patch_note.to_meta_dict())
+        result[patch_note.time.isoformat()] = patch_note.to_meta_dict()
     with open(CACHE_PATH, "w", encoding="utf-8") as file:
         json.dump(result, file)
     logger.info("Dumped patch note metadata to %s", CACHE_PATH)
@@ -95,9 +95,20 @@ def load_patch_notes_from_cache(file_path: str = CACHE_PATH) -> List[PatchNote]:
     with open(file_path, "r", encoding="utf-8") as file:
         raw = json.load(file)
     patch_notes = []
-    for raw_p in raw:
+    for key, raw_p in raw.items():
         patch_notes.append(PatchNote.from_meta_dict(raw_p))
     return patch_notes
+
+
+def load_patch_note_content(patch_note: PatchNote):
+    file_path = f"{DOWNLOAD_PATH}/patch_notes_{patch_note.time.isoformat()}.html"
+    with open(file_path, "r", encoding="utf-8") as file:
+        patch_note.content = file.read()
+
+
+def load_patch_notes_content(patch_notes: List[PatchNote]):
+    for patch_note in patch_notes:
+        load_patch_note_content(patch_note)
 
 
 def rate_limit():

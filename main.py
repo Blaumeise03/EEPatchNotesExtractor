@@ -6,15 +6,15 @@ from typing import Literal
 
 import requests
 
-from ee_patch_notes import scraper
+from ee_patch_notes import scraper, formatter
 
 logger = logging.getLogger()
 
-formatter = logging.Formatter(fmt="[%(asctime)s][%(levelname)s][%(name)s]: %(message)s")
+log_format = logging.Formatter(fmt="[%(asctime)s][%(levelname)s][%(name)s]: %(message)s")
 
 console = logging.StreamHandler(sys.stdout)
 console.setLevel(logging.DEBUG)
-console.setFormatter(formatter)
+console.setFormatter(log_format)
 logger.addHandler(console)
 logger.setLevel(logging.INFO)
 
@@ -28,8 +28,8 @@ logger.setLevel(logging.INFO)
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Patch notes scrapper for the game Eve Echoes")
     parser.add_argument("mode",
-                        type=str, choices=["load_all", "load_new"],
-                        help="Select the mode, must be load_all or load_new")
+                        type=str, choices=["load_all", "load_new", "create_html"],
+                        help="Select the mode, must be load_all, load_new or create_html")
     parser.add_argument("output_path",
                         type=str, help="The output directory")
     parser.add_argument("-c", "--cache",
@@ -54,8 +54,9 @@ if __name__ == '__main__':
     scraper.RATE_LIMIT_SECONDS = args.ratelimit
     scraper.RATE_LIMIT_RAND_FAC = args.ratelimit_rnd_fac
     base_url = args.url
-    last_page = scraper.load_page_range(home_url=base_url.format(index=""))
+
     if args.mode == "load_all":
+        last_page = scraper.load_page_range(home_url=base_url.format(index=""))
         if args.cache:
             patch_notes = scraper.load_patch_notes_from_cache()
         else:
@@ -64,4 +65,9 @@ if __name__ == '__main__':
                max_index=last_page)
         scraper.download_all_patch_notes(patch_notes, skip_existing=not args.force_reload)
     elif args.mode == "load_new":
+        last_page = scraper.load_page_range(home_url=base_url.format(index=""))
         scraper.download_new_patch_notes(base_url=base_url, stop_at=last_page)
+    elif args.mode == "create_html":
+        patch_notes = scraper.load_patch_notes_from_cache()
+        scraper.load_patch_notes_content(patch_notes)
+        formatter.export_html(patch_notes, f"{args.output_path}/patch_notes.html")
