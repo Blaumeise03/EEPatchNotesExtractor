@@ -180,9 +180,9 @@ def extract_patch_notes_urls(url: str) -> List[PatchNote]:
     return patch_urls
 
 
-def find_all_patch_notes_urls(base_url: str, max_index: int) -> List[PatchNote]:
+def find_all_patch_notes_urls(base_url: str, max_index: int, min_index: int = 1) -> List[PatchNote]:
     patch_notes = []
-    for i in range(1, max_index + 1):
+    for i in range(min_index, max_index + 1):
         logger.info("Loading patch note urls %s/%s", i, max_index)
         index = f"_{i}"
         if i == 1:
@@ -233,3 +233,21 @@ def download_all_patch_notes(patch_notes: List[PatchNote], skip_existing=True) -
         logger.info("Processing %s [%s/%s]: Downloading %s",
                     patch_note.time.isoformat(), i + 1, length, patch_note.url)
         download_patch_note(patch_note, save_path)
+
+
+def has_missing_notes(patch_notes: List[PatchNote]) -> bool:
+    for patch_note in patch_notes:
+        save_path = f"{DOWNLOAD_PATH}/patch_notes_{patch_note.time.isoformat()}.html"
+        if not os.path.exists(save_path):
+            return True
+    return False
+
+
+def download_new_patch_notes(base_url: str, stop_at=4) -> None:
+    logger.info("Loading missing patch notes")
+    for i in range(1, stop_at + 1):
+        patch_notes = find_all_patch_notes_urls(base_url=base_url, max_index=i, min_index=i)
+        if not has_missing_notes(patch_notes):
+            logger.info("Page %s has no new patch notes, stopping search", i)
+            break
+        download_all_patch_notes(patch_notes)
