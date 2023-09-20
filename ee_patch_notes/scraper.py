@@ -16,15 +16,17 @@ logger = logging.getLogger("ee.web")
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0"
 }
-RATE_LIMIT_SECONDS = 0
+RATE_LIMIT_SECONDS = 1
 RATE_LIMIT_RAND_FAC = 1
 last_request = None  # type: datetime | None
 DOWNLOAD_PATH = "data/patch_notes"
 CACHE_PATH = f"{DOWNLOAD_PATH}/cache.json"
 session = requests.Session()
 
-if not os.path.exists(DOWNLOAD_PATH):
-    os.makedirs(DOWNLOAD_PATH)
+
+def mk_dirs():
+    if not os.path.exists(DOWNLOAD_PATH):
+        os.makedirs(DOWNLOAD_PATH)
 
 
 class WebScrapeException(Exception):
@@ -217,7 +219,7 @@ def download_patch_note(patch_note: PatchNote, save_path: str) -> None:
         logger.error("Did not found patch note title for %s", patch_note.url)
         raise WebScrapeException("Failed parse patch note title")
 
-    patch_note.content = data_patch_notes.decode(indent_level=2)
+    patch_note.content = data_patch_notes.decode()
     patch_note.save_content(save_path)
     logger.debug("Saved patch notes %s to %s", patch_note.url, save_path)
 
@@ -227,7 +229,7 @@ def download_all_patch_notes(patch_notes: List[PatchNote], skip_existing=True) -
     for i, patch_note in enumerate(patch_notes):
         save_path = f"{DOWNLOAD_PATH}/patch_notes_{patch_note.time.isoformat()}.html"
         if skip_existing and os.path.exists(save_path):
-            logger.info("Processing %s [%s/%s]:  File exists - skipping",
+            logger.info("Processing %s [%s/%s]: File exists - skipping",
                         patch_note.time.isoformat(), i + 1, length)
             continue
         logger.info("Processing %s [%s/%s]: Downloading %s",
