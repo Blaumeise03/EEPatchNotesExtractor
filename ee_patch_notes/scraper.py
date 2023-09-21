@@ -100,6 +100,16 @@ def load_patch_notes_from_cache(file_path: str = CACHE_PATH) -> List[PatchNote]:
     return patch_notes
 
 
+def append_patch_note_cache(patch_notes: List[PatchNote]) -> None:
+    with open(CACHE_PATH, "r", encoding="utf-8") as file:
+        raw = json.load(file)
+    for patch_note in patch_notes:
+        raw[patch_note.time.isoformat()] = patch_note.to_meta_dict()
+    with open(CACHE_PATH, "w", encoding="utf-8") as file:
+        json.dump(raw, file)
+    logger.info("Dumped patch note metadata to %s", CACHE_PATH)
+
+
 def load_patch_note_content(patch_note: PatchNote):
     file_path = f"{DOWNLOAD_PATH}/patch_notes_{patch_note.time.isoformat()}.html"
     with open(file_path, "r", encoding="utf-8") as file:
@@ -118,7 +128,7 @@ def rate_limit():
         return
     diff = (datetime.now() - last_request).total_seconds()
     if diff < RATE_LIMIT_SECONDS:
-        delay = RATE_LIMIT_SECONDS - diff + RATE_LIMIT_RAND_FAC * random.random()
+        delay = RATE_LIMIT_SECONDS + RATE_LIMIT_RAND_FAC * random.random() - diff
         sleep(delay)
     last_request = datetime.now()
 
@@ -258,9 +268,12 @@ def has_missing_notes(patch_notes: List[PatchNote]) -> bool:
 
 def download_new_patch_notes(base_url: str, stop_at=4) -> None:
     logger.info("Loading missing patch notes")
+    new_notes = []
     for i in range(1, stop_at + 1):
         patch_notes = find_all_patch_notes_urls(base_url=base_url, max_index=i, min_index=i)
         if not has_missing_notes(patch_notes):
             logger.info("Page %s has no new patch notes, stopping search", i)
             break
+        new_notes.extend(patch_notes)
         download_all_patch_notes(patch_notes)
+    append_patch_note_cache(new_notes)
