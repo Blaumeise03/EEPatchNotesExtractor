@@ -1,7 +1,7 @@
 import datetime
 import logging
 from pathlib import Path
-from typing import List
+from typing import List, Union, Optional
 
 from bs4 import BeautifulSoup, Tag, PageElement, NavigableString
 
@@ -16,8 +16,8 @@ class FormattingException(Exception):
 
 
 # noinspection PyTypeChecker,PyUnresolvedReferences
-def _replace_section_heading(tag: Tag, soup: BeautifulSoup):
-    # The heading scheme is incosistent, there are these variations:
+def replace_section_heading(tag: Tag, soup: BeautifulSoup):
+    # The heading scheme is inconsistent, there are these variations:
     # <span style="color:#FF8C00;">
     #  <strong>Major Heading</strong>
     #  <br>
@@ -44,92 +44,131 @@ def _replace_section_heading(tag: Tag, soup: BeautifulSoup):
     #  </span>
     # </strong>
     #
-    def _is_br_sibling(obj: Tag | NavigableString):
-        if obj.next_sibling is not None and obj.next_sibling.name == "br":
+    def _is_heading_tag(obj: Tag):
+        return isinstance(obj, Tag) and (obj.name == "em" or obj.name == "strong")
+
+    def _get_first_real_element(
+            contents: Optional[List[Union[Tag, NavigableString]]] = None,
+            element: Union[Tag, NavigableString] = None):
+        if contents is None and element is None:
+            raise TypeError("Either a list of elements or an element must be given")
+        if contents is not None and element is not None:
+            raise TypeError("Only may parameter be given")
+        if element is not None:
+            el = element.next_sibling
+            if isinstance(el, NavigableString) and len(el.text.strip(" \n")) == 0:
+                if el.next_sibling is None:
+                    return None
+                # noinspection PyTypeChecker
+                return _get_first_real_element(element=el)
+            return el
+        # noinspection PyTypeChecker
+        for el in contents:
+            if isinstance(el, NavigableString) and len(el.text.strip(" \n")) == 0:
+                continue
+            return el
+        return None
+
+    def _is_end_of_paragraph(obj: Tag | NavigableString):
+        sibling = _get_first_real_element(element=tag)
+        if sibling is not None and sibling.name == "br":
             return True
-        if obj.next_sibling is None:
-            return False
+        elif sibling is None:
+            return obj.parent.name == "p"
         if isinstance(obj.next_sibling, NavigableString):
             _str = obj.next_sibling
             if _str.next_sibling is not None and _str.next_sibling.name == "br":
                 _str.extract()
         return False
-    span = None
-    strong = None
-    em = None
-    minor = None
 
-    if tag.name != "span":
-        return
-    span = tag
-    em = span.find("em")  # type: Tag | None
-    # ToDo: Handle headings without <strong> (only <em>), see 2021-12-01
-    if len(span.contents) == 0:
-        return
-    if len(span.contents) > 1:
-        for t in span.contents:
+    outer_tag = None  # type: Tag
+    middle_tag = None  # type: Tag
+    inner_tag = None  # type: Tag
+    major = None  # type: NavigableString
+    minor = None  # type: NavigableString
+    num_contents = 0
+    for t in tag.contents:
+        if isinstance(t, NavigableString) and len(t.text.strip(" \n")) == 0:
+            continue
+        num_contents += 1
+
+    # Check special case where there are two headings in one <span>
+    if num_contents > 1:
+        outer_tag = tag
+        for t in tag.contents:
             if isinstance(t, Tag) and t.name == "strong":
-                strong = t
+                inner_tag = t
             if isinstance(t, NavigableString):
                 minor = t
     else:
-        if isinstance(span.contents[0], NavigableString):
-            minor = span.contents[0]
-        elif em is not None and em.contents[0].name == "strong":
-            strong = em.contents[0]
-        elif isinstance(span.contents[0], Tag) and span.contents[0].name == "strong":
-            strong = span.contents[0]
+        t = _get_first_real_element(tag.contents)
+        outer_tag = tag
+        # Check children of span
+        if isinstance(t, Tag) and _is_heading_tag(t):
+            inner_tag = t
+            t = _get_first_real_element(t.contents)
+            # <span><strong>???</strong><span>
+            # outer  inner   t
+            if isinstance(t, Tag) and _is_heading_tag(t):
+                # <span><strong><em>Text</em></strong><span>
+                # outer  middle  t
+                middle_tag = inner_tag
+                inner_tag = t
+            elif isinstance(t, NavigableString):
+                # <span><strong>Text</strong><span>
+                # outer  inner   t
+                pass
+        elif isinstance(t, NavigableString):
+            # <span>Text<span>
+            # inner   t
+            inner_tag = t.parent
+        # Check parents
+        t = outer_tag.parent
+        if _is_heading_tag(t):
+            # <em><span>???<span></em>
+            #  t  outer inner?
+            middle_tag = outer_tag
+            outer_tag = t
+            t = outer_tag.parent
+            if _is_heading_tag(t):
+                # <strong><em><span>Text<span></em></strong>
+                # outer  middle inner
+                middle_tag = outer_tag
+                outer_tag = t
 
-    if not _is_br_sibling(span):
-        # Check if <span> and <strong> are switched
-        if span.parent.name == "strong":
-            strong = span
-            span = span.parent
-            if span.parent.name == "em":
-                span = span.parent
-            # (Those tags get deleted anyway, so it doesn't matter that the span tag is now saved in `strong`
-        elif span.parent.name == "em":
-            # Can also happen with an <em> between <strong> and <span>
-            em = span.parent
-            if em.parent.name == "strong":
-                strong = span
-                span = em.parent
-        # ToDo: Find better way, also possible is <em><span><strong>Heading..., see 2022-10-26
-
-    if not _is_br_sibling(span):
-        # Check if the heading is the sole content of a <p> tag, for example
-        # <p><span style...>Heading</span></p>
-        # In this case there is now br tag required
-        # ToDo: It is also possible that span is the last content of a <p>-tag, see 2022-08-17
-        # ToDo: Also possible that instead of p-tag they use a div-tag, see 2022-08-10
-        if span.parent.name != "p" or len(span.parent.contents) != 1:
-            return
+    if outer_tag is None or not _is_end_of_paragraph(outer_tag):
+        return
+    if inner_tag.name == "strong" or (middle_tag and middle_tag.name == "strong") or outer_tag.name == "strong":
+        major = inner_tag.contents[0]
     else:
-        # Delete the <br> tag
-        span.next_sibling.decompose()
+        minor = inner_tag.contents[0]
 
     major_heading = None
-    if strong:
-        if _is_br_sibling(strong):
-            strong.next_sibling.decompose()
+    last_el = None
+    if major:
         major_heading = soup.new_tag("h3")
-        major_heading.insert(0, strong.contents[0])
-        tag.insert_after(major_heading)
+        major_heading.insert(0, major)
+        outer_tag.insert_after(major_heading)
+        last_el = major_heading
     if minor:
         minor_heading = soup.new_tag("h4")
         minor_heading.insert(0, minor)
         if major_heading is not None:
             major_heading.insert_after(minor_heading)
         else:
-            tag.insert_after(minor_heading)
-
-    tag.decompose()
+            outer_tag.insert_after(minor_heading)
+        last_el = minor_heading
+    next_el = _get_first_real_element(element=last_el)
+    if next_el is not None and next_el.name == "br":
+        next_el.decompose()
+    outer_tag.decompose()
 
 
 def get_html(patch_note: PatchNote) -> PageElement:
     if patch_note.content is None:
         raise FormattingException(f"Patch note {patch_note} does not have any content")
-    soup = BeautifulSoup(patch_note.content, "html.parser")
+    soup = BeautifulSoup(patch_note.content.replace(" ", " "), "html.parser")  # .replace(" ", " ")
+    # soup2 = BeautifulSoup(patch_note.content.replace(" ", " "), "html.parser")
 
     # Remove unnecessary spans
     for span_tag in soup.find_all("span"):  # type: Tag
@@ -144,6 +183,8 @@ def get_html(patch_note: PatchNote) -> PageElement:
             del p_tag["style"]
         if p_tag.get("class") is not None and len(p_tag["class"]) != 1 and p_tag["class"][0] != "date":
             del p_tag["class"]
+    for tag in soup.find_all("b"):
+        tag.name = "strong"
 
     # Delete all images (older patch notes did contain <img> tags)
     for img_tag in soup.find_all("img"):  # type: Tag
@@ -154,8 +195,9 @@ def get_html(patch_note: PatchNote) -> PageElement:
         if "color" not in span_tag.get("style", default=""):
             continue
         # ToDo: Maybe handle pre-2021-10-11 patch notes (uncolored headings)
-        _replace_section_heading(span_tag, soup)
+        replace_section_heading(span_tag, soup)
     # ToDo: Cleanup Headings and divs, see 2022-04-02 or 2022-05-31, especially 2022-06-08
+    # ToDo: Divide <p> tags at headings (there are now h3 and h4 inside <p> tags)
     # noinspection PyTypeChecker
     tag = soup.contents[0]  # type: Tag
     tag["class"] = "patch-note"
