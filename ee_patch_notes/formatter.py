@@ -9,6 +9,7 @@ from ee_patch_notes.scraper import PatchNote
 
 
 logger = logging.getLogger("ee.export")
+TEXT_TAGS = ["span", "em", "strong"]
 
 
 class FormattingException(Exception):
@@ -70,7 +71,7 @@ def replace_section_heading(tag: Tag, soup: BeautifulSoup):
         return None
 
     def _is_end_of_paragraph(obj: Tag | NavigableString):
-        sibling = _get_first_real_element(element=tag)
+        sibling = _get_first_real_element(element=obj)
         if sibling is not None and sibling.name == "br":
             return True
         elif sibling is None:
@@ -164,11 +165,65 @@ def replace_section_heading(tag: Tag, soup: BeautifulSoup):
     outer_tag.decompose()
 
 
+def remove_div(div: Tag, soup: BeautifulSoup):
+    len_content = 0
+    child = None
+    for c in div.contents:
+        if isinstance(c, NavigableString) and len(c.text.strip(" \n")) == 0:
+            continue
+        len_content += 1
+        if child is None:
+            child = c
+    if len_content < 1:
+        div.decompose()
+    elif len_content == 1:
+        if child.name == "div":
+            div.unwrap()
+            remove_div(child, soup=soup)
+        elif isinstance(child, NavigableString) or child.name in TEXT_TAGS:
+            repl = soup.new_tag("p")
+            repl.insert(0, child.extract())
+            div.insert_after(repl)
+            div.decompose()
+        else:
+            logger.warning("Unknown div child %s", child)
+    else:
+        div.unwrap()
+
+
+def replace_with_ul(tag: Tag, soup: BeautifulSoup):
+    ul = soup.new_tag("ul", style="list-style-type: square;")
+    tag.insert_before(ul)
+    p = tag
+    i = 0
+    while p.name == "p" and "margin-left: 40px" in p.get("style", ""):
+        n = p.next_sibling
+        li = soup.new_tag("li")
+        ul.insert(i, li)
+        li.insert(0, p)
+        p.unwrap()
+        i += 1
+        p = n
+
+
 def get_html(patch_note: PatchNote) -> PageElement:
     if patch_note.content is None:
         raise FormattingException(f"Patch note {patch_note} does not have any content")
     soup = BeautifulSoup(patch_note.content.replace(" ", " "), "html.parser")  # .replace(" ", " ")
     # soup2 = BeautifulSoup(patch_note.content.replace(" ", " "), "html.parser")
+
+    # Delete all images (older patch notes did contain <img> tags)
+    for img_tag in soup.find_all("img"):  # type: Tag
+        img_tag.replaceWith("")
+
+    # Basic setup
+    # noinspection PyTypeChecker
+    tag = soup.contents[0]  # type: Tag
+    tag["class"] = "patch-note"
+    tag["id"] = "patch-note-" + patch_note.time.isoformat()
+    tag.find("div", class_="title")["class"] = "patch-title"
+    content = tag.find("div", class_="artCon")
+    content["class"] = "patch-content"
 
     # Remove unnecessary spans
     for span_tag in soup.find_all("span"):  # type: Tag
@@ -177,18 +232,23 @@ def get_html(patch_note: PatchNote) -> PageElement:
             span_tag.unwrap()
         if span_tag.get("class") is not None:
             del span_tag["class"]
+
+    # Replace/remove divs
+    for div_tag in content.find_all("div", recursive=False):
+        remove_div(div_tag, soup)
+
     for p_tag in soup.find_all("p"):  # type: Tag
         # ToDo: Convert p with style="margin-left" to <ul>-lists, see 2022-04-02
         if p_tag.get("style") is not None:
+            if p_tag.decomposed:
+                continue
+            if "margin-left: 40px" in p_tag.get("style"):
+                replace_with_ul(p_tag, soup)
             del p_tag["style"]
         if p_tag.get("class") is not None and len(p_tag["class"]) != 1 and p_tag["class"][0] != "date":
             del p_tag["class"]
     for tag in soup.find_all("b"):
         tag.name = "strong"
-
-    # Delete all images (older patch notes did contain <img> tags)
-    for img_tag in soup.find_all("img"):  # type: Tag
-        img_tag.replaceWith("")
 
     # Find subheadings
     for span_tag in soup.find_all("span"):  # type: Tag
@@ -198,13 +258,7 @@ def get_html(patch_note: PatchNote) -> PageElement:
         replace_section_heading(span_tag, soup)
     # ToDo: Cleanup Headings and divs, see 2022-04-02 or 2022-05-31, especially 2022-06-08
     # ToDo: Divide <p> tags at headings (there are now h3 and h4 inside <p> tags)
-    # noinspection PyTypeChecker
-    tag = soup.contents[0]  # type: Tag
-    tag["class"] = "patch-note"
-    tag["id"] = "patch-note-" + patch_note.time.isoformat()
-    tag.find("div", class_="title")["class"] = "patch-title"
-    tag.find("div", class_="artCon")["class"] = "patch-content"
-    return tag
+    return soup.contents[0]
 
 
 def export_html(patch_notes: List[PatchNote], path: str):
