@@ -16,6 +16,29 @@ class FormattingException(Exception):
     pass
 
 
+def _get_first_real_element(
+        contents: Optional[List[Union[Tag, NavigableString]]] = None,
+        element: Union[Tag, NavigableString] = None):
+    if contents is None and element is None:
+        raise TypeError("Either a list of elements or an element must be given")
+    if contents is not None and element is not None:
+        raise TypeError("Only may parameter be given")
+    if element is not None:
+        el = element.next_sibling
+        if isinstance(el, NavigableString) and len(el.text.strip(" \n")) == 0:
+            if el.next_sibling is None:
+                return None
+            # noinspection PyTypeChecker
+            return _get_first_real_element(element=el)
+        return el
+    # noinspection PyTypeChecker
+    for el in contents:
+        if isinstance(el, NavigableString) and len(el.text.strip(" \n")) == 0:
+            continue
+        return el
+    return None
+
+
 # noinspection PyTypeChecker,PyUnresolvedReferences
 def replace_section_heading(tag: Tag, soup: BeautifulSoup):
     # The heading scheme is inconsistent, there are these variations:
@@ -47,28 +70,6 @@ def replace_section_heading(tag: Tag, soup: BeautifulSoup):
     #
     def _is_heading_tag(obj: Tag):
         return isinstance(obj, Tag) and (obj.name == "em" or obj.name == "strong")
-
-    def _get_first_real_element(
-            contents: Optional[List[Union[Tag, NavigableString]]] = None,
-            element: Union[Tag, NavigableString] = None):
-        if contents is None and element is None:
-            raise TypeError("Either a list of elements or an element must be given")
-        if contents is not None and element is not None:
-            raise TypeError("Only may parameter be given")
-        if element is not None:
-            el = element.next_sibling
-            if isinstance(el, NavigableString) and len(el.text.strip(" \n")) == 0:
-                if el.next_sibling is None:
-                    return None
-                # noinspection PyTypeChecker
-                return _get_first_real_element(element=el)
-            return el
-        # noinspection PyTypeChecker
-        for el in contents:
-            if isinstance(el, NavigableString) and len(el.text.strip(" \n")) == 0:
-                continue
-            return el
-        return None
 
     def _is_end_of_paragraph(obj: Tag | NavigableString):
         sibling = _get_first_real_element(element=obj)
@@ -206,6 +207,23 @@ def replace_with_ul(tag: Tag, soup: BeautifulSoup):
         p = n
 
 
+def extract_heading(heading: Tag, soup: BeautifulSoup):
+    prev_p = heading.parent
+    next_p = soup.new_tag("p")
+    i = 0
+    tag = heading.next_sibling
+    while tag is not None:
+        next_p.insert(i, tag)
+        tag = tag.next_sibling
+        i += 1
+    prev_p.insert_after(heading)
+    heading.insert_after(next_p)
+    if len(prev_p.contents) == 0 or _get_first_real_element(contents=prev_p.contents) is None:
+        prev_p.decompose()
+    if len(next_p.contents) == 0 or _get_first_real_element(contents=next_p.contents) is None:
+        next_p.decompose()
+
+
 def get_html(patch_note: PatchNote) -> PageElement:
     if patch_note.content is None:
         raise FormattingException(f"Patch note {patch_note} does not have any content")
@@ -238,7 +256,6 @@ def get_html(patch_note: PatchNote) -> PageElement:
         remove_div(div_tag, soup)
 
     for p_tag in soup.find_all("p"):  # type: Tag
-        # ToDo: Convert p with style="margin-left" to <ul>-lists, see 2022-04-02
         if p_tag.get("style") is not None:
             if p_tag.decomposed:
                 continue
@@ -247,6 +264,8 @@ def get_html(patch_note: PatchNote) -> PageElement:
             del p_tag["style"]
         if p_tag.get("class") is not None and len(p_tag["class"]) != 1 and p_tag["class"][0] != "date":
             del p_tag["class"]
+        if p_tag.get("align") is not None:
+            del p_tag["align"]
     for tag in soup.find_all("b"):
         tag.name = "strong"
 
@@ -256,8 +275,10 @@ def get_html(patch_note: PatchNote) -> PageElement:
             continue
         # ToDo: Maybe handle pre-2021-10-11 patch notes (uncolored headings)
         replace_section_heading(span_tag, soup)
-    # ToDo: Cleanup Headings and divs, see 2022-04-02 or 2022-05-31, especially 2022-06-08
-    # ToDo: Divide <p> tags at headings (there are now h3 and h4 inside <p> tags)
+    # ToDo: Cleanup Headings and divs, see 2022-04-02
+    for p_tag in soup.find_all("p"):
+        for heading in p_tag.find_all(["h3", "h4"], recursive=False):
+            extract_heading(heading, soup)
     return soup.contents[0]
 
 
