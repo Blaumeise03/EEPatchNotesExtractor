@@ -92,6 +92,9 @@ def save_patch_note_cache(patch_notes: List[PatchNote]) -> None:
 
 
 def load_patch_notes_from_cache(file_path: str = CACHE_PATH) -> List[PatchNote]:
+    if not os.path.exists(file_path):
+        logger.warning("Patch note cache file not found: %s", file_path)
+        return []
     with open(file_path, "r", encoding="utf-8") as file:
         raw = json.load(file)
     patch_notes = []
@@ -101,8 +104,12 @@ def load_patch_notes_from_cache(file_path: str = CACHE_PATH) -> List[PatchNote]:
 
 
 def append_patch_note_cache(patch_notes: List[PatchNote]) -> None:
-    with open(CACHE_PATH, "r", encoding="utf-8") as file:
-        raw = json.load(file)
+    if not os.path.exists(CACHE_PATH):
+        logger.warning("Patch note cache file not found: %s", CACHE_PATH)
+        raw = {}
+    else:
+        with open(CACHE_PATH, "r", encoding="utf-8") as file:
+            raw = json.load(file)
     for patch_note in patch_notes:
         raw[patch_note.time.isoformat()] = patch_note.to_meta_dict()
     with open(CACHE_PATH, "w", encoding="utf-8") as file:
@@ -203,7 +210,7 @@ def extract_patch_notes_urls(url: str) -> List[PatchNote]:
     return patch_urls
 
 
-def find_all_patch_notes_urls(base_url: str, max_index: int, min_index: int = 1) -> List[PatchNote]:
+def find_all_patch_notes_urls(base_url: str, max_index: int, min_index: int = 1, cache=True) -> List[PatchNote]:
     patch_notes = []
     for i in range(min_index, max_index + 1):
         logger.info("Loading patch note urls %s/%s", i, max_index)
@@ -213,7 +220,8 @@ def find_all_patch_notes_urls(base_url: str, max_index: int, min_index: int = 1)
         new_notes = extract_patch_notes_urls(base_url.format(index=index))
         patch_notes.extend(new_notes)
     logger.info("Loaded a total of %s patch note urls", len(patch_notes))
-    save_patch_note_cache(patch_notes)
+    if cache:
+        save_patch_note_cache(patch_notes)
     return patch_notes
 
 
@@ -270,7 +278,7 @@ def download_new_patch_notes(base_url: str, stop_at=4) -> None:
     logger.info("Loading missing patch notes")
     new_notes = []
     for i in range(1, stop_at + 1):
-        patch_notes = find_all_patch_notes_urls(base_url=base_url, max_index=i, min_index=i)
+        patch_notes = find_all_patch_notes_urls(base_url=base_url, max_index=i, min_index=i, cache=False)
         if not has_missing_notes(patch_notes):
             logger.info("Page %s has no new patch notes, stopping search", i)
             break
