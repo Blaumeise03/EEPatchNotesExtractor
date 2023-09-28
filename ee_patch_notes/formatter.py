@@ -213,8 +213,9 @@ def extract_heading(heading: Tag, soup: BeautifulSoup):
     i = 0
     tag = heading.next_sibling
     while tag is not None:
+        n_tag = tag.next_sibling
         next_p.insert(i, tag)
-        tag = tag.next_sibling
+        tag = n_tag
         i += 1
     prev_p.insert_after(heading)
     heading.insert_after(next_p)
